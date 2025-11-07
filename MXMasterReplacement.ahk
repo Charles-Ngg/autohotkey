@@ -3,8 +3,9 @@
 
 ; ================== Settings ==================
 StartDirection := "follow"           ; "follow" = use last flick direction, or "down"/"up" to force one direction
-StepIntervals := [200, 20, 5, 1]   ; ms between auto wheel ticks (slower -> faster)
-TripleWindow  := 40                 ; ms window to detect 3 fast wheel notches
+StepIntervals := [100, 20, 5, 1]   ; ms between auto wheel ticks (slower -> faster)
+TripleWindow  := 100                 ; ms window to detect 3 fast wheel notches
+MouseMovePoll := 25                  ; ms for mouse-move polling while auto-scroll is active
 ; ==============================================
 
 ; State
@@ -13,10 +14,32 @@ global gAutoDir := ""           ; "up" / "down"
 global gStepIndex := 1
 global gTimesUp := []
 global gTimesDown := []
+global gMouseLastX := 0, gMouseLastY := 0
 
 ; Hotkeys: "~" lets your normal scroll go through; "$" prevents our own Send() from retriggering the hotkey
 ~$WheelUp::HandleWheel("up")
 ~$WheelDown::HandleWheel("down")
+
+; Stop on any mouse click (down event is enough)
+~LButton::OnUserActivity("LButton")
+~RButton::OnUserActivity("RButton")
+~MButton::OnUserActivity("MButton")
+~XButton1::OnUserActivity("XButton1")
+~XButton2::OnUserActivity("XButton2")
+
+; Catch-all keyboard hooks (vk08..vkFE)
+SetupKeyboardActivityHooks() {
+    start := 0x08, finish := 0xFE
+    Loop finish - start + 1 {
+        vk := start + A_Index - 1
+        name := "*~$" Format("vk{:02X}", vk)
+        try Hotkey(name, OnKeyboardAny, "On")
+    }
+}
+
+OnKeyboardAny(*) {
+    OnUserActivity("Keyboard")
+}
 
 HandleWheel(dir) {
     global gIsAuto, gAutoDir, gStepIndex, gTimesUp, gTimesDown, StepIntervals, TripleWindow, StartDirection
@@ -27,7 +50,7 @@ HandleWheel(dir) {
     if (gIsAuto) {
         if (dir != gAutoDir) {
             ; Opposite flick stops auto-scroll immediately
-            StopAutoScroll()
+            StopAutoScroll("OppositeScroll")
         } else {
             ; Same-direction flick increases speed (up to fastest step)
             IncreaseSpeed()
@@ -55,12 +78,17 @@ HandleWheel(dir) {
 }
 
 StartAutoScroll(dir) {
-    global gIsAuto, gAutoDir, gStepIndex, StepIntervals, StartDirection, gTimesUp, gTimesDown
+    global gIsAuto, gAutoDir, gStepIndex, StepIntervals, StartDirection, gTimesUp, gTimesDown, gMouseLastX, gMouseLastY, MouseMovePoll
 
     gIsAuto := true
     gStepIndex := 1
     gAutoDir := (StartDirection = "follow") ? dir : StartDirection
     SetTimer(AutoScrollTick, StepIntervals[gStepIndex])
+
+    ; Start mouse-move monitoring
+    MouseGetPos &mx, &my
+    gMouseLastX := mx, gMouseLastY := my
+    SetTimer(MonitorMouseMove, MouseMovePoll)
 
     ; Reset counters so they don't immediately retrigger
     gTimesUp := []
@@ -75,14 +103,16 @@ IncreaseSpeed() {
     }
 }
 
-StopAutoScroll() {
+StopAutoScroll(reason := "") {
     global gIsAuto, gAutoDir, gStepIndex, gTimesUp, gTimesDown
     gIsAuto := false
     gAutoDir := ""
     gStepIndex := 1
     SetTimer(AutoScrollTick, 0)
+    SetTimer(MonitorMouseMove, 0)
     gTimesUp := []
     gTimesDown := []
+    ; ToolTip(reason)  ; uncomment for debugging
 }
 
 AutoScrollTick() {
@@ -91,3 +121,25 @@ AutoScrollTick() {
         return
     Send(gAutoDir = "up" ? "{WheelUp}" : "{WheelDown}")
 }
+
+MonitorMouseMove() {
+    global gIsAuto, gMouseLastX, gMouseLastY
+    if (!gIsAuto) {
+        SetTimer(MonitorMouseMove, 0)
+        return
+    }
+    MouseGetPos &x, &y
+    if (x != gMouseLastX || y != gMouseLastY) {
+        StopAutoScroll("MouseMove")
+        return
+    }
+}
+
+OnUserActivity(reason := "") {
+    global gIsAuto
+    if (gIsAuto)
+        StopAutoScroll(reason)
+}
+
+; Initialize catch-all keyboard hooks at startup
+SetupKeyboardActivityHooks()
