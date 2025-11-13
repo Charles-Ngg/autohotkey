@@ -6,6 +6,7 @@ StartDirection := "follow"           ; "follow" = use last flick direction, or "
 StepIntervals := [100, 20, 5, 1]   ; ms between auto wheel ticks (slower -> faster)
 TripleWindow  := 100                 ; ms window to detect 3 fast wheel notches
 MouseMovePoll := 25                  ; ms for mouse-move polling while auto-scroll is active
+MouseMoveTolerance := 50   ; pixels allowed before auto-scroll stops
 ; ==============================================
 
 ; State
@@ -123,16 +124,24 @@ AutoScrollTick() {
 }
 
 MonitorMouseMove() {
-    global gIsAuto, gMouseLastX, gMouseLastY
+    global gIsAuto, gMouseLastX, gMouseLastY, MouseMoveTolerance
     if (!gIsAuto) {
         SetTimer(MonitorMouseMove, 0)
         return
     }
     MouseGetPos &x, &y
-    if (x != gMouseLastX || y != gMouseLastY) {
+    dx := x - gMouseLastX
+    dy := y - gMouseLastY
+    ; Use squared distance to avoid sqrt
+    if ((dx*dx + dy*dy) > MouseMoveTolerance * MouseMoveTolerance) {
         StopAutoScroll("MouseMove")
         return
     }
+
+    ; If you prefer to allow unlimited micro-drift (never stop unless a single jump exceeds tolerance),
+    ; uncomment the next two lines to continually “follow” the cursor within the tolerance:
+    ; gMouseLastX := x
+    ; gMouseLastY := y
 }
 
 OnUserActivity(reason := "") {
