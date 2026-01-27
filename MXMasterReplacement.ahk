@@ -3,10 +3,15 @@
 
 ; ================== Settings ==================
 StartDirection := "follow"           ; "follow" = use last flick direction, or "down"/"up" to force one direction
-StepIntervals := [100, 20, 5, 1]   ; ms between auto wheel ticks (slower -> faster)
-TripleWindow  := 100                 ; ms window to detect 3 fast wheel notches
+StepIntervals := [200, 20, 5, 1]     ; ms between auto wheel ticks (slower -> faster)
+TripleWindow  := 100                 ; ms window to detect 3 fast wheel notches to START
 MouseMovePoll := 25                  ; ms for mouse-move polling while auto-scroll is active
-MouseMoveTolerance := 50   ; pixels allowed before auto-scroll stops
+MouseMoveTolerance := 50             ; pixels allowed before auto-scroll stops
+
+; ===== NEW: Speed-Up Control Settings =====
+SpeedUpWindow := 400                 ; ms window to detect speed-up flicks
+SpeedUpThreshold := 3                ; number of same-direction flicks needed to speed up
+SpeedUpCooldown := 200               ; ms minimum wait after a speed increase before next upgrade allowed
 ; ==============================================
 
 ; State
@@ -16,6 +21,10 @@ global gStepIndex := 1
 global gTimesUp := []
 global gTimesDown := []
 global gMouseLastX := 0, gMouseLastY := 0
+
+; NEW: Speed-up state
+global gSpeedUpTimes := []
+global gLastSpeedUpTime := 0
 
 ; Hotkeys: "~" lets your normal scroll go through; "$" prevents our own Send() from retriggering the hotkey
 ~$WheelUp::HandleWheel("up")
@@ -44,6 +53,7 @@ OnKeyboardAny(*) {
 
 HandleWheel(dir) {
     global gIsAuto, gAutoDir, gStepIndex, gTimesUp, gTimesDown, StepIntervals, TripleWindow, StartDirection
+    global gSpeedUpTimes, SpeedUpWindow, SpeedUpThreshold, SpeedUpCooldown, gLastSpeedUpTime
 
     now := A_TickCount
 
@@ -53,8 +63,24 @@ HandleWheel(dir) {
             ; Opposite flick stops auto-scroll immediately
             StopAutoScroll("OppositeScroll")
         } else {
-            ; Same-direction flick increases speed (up to fastest step)
-            IncreaseSpeed()
+            ; Same-direction flick: check if we can speed up
+            
+            ; Check cooldown first
+            if (now - gLastSpeedUpTime < SpeedUpCooldown)
+                return
+            
+            ; Drop entries older than the SpeedUpWindow
+            while (gSpeedUpTimes.Length && now - gSpeedUpTimes[1] > SpeedUpWindow)
+                gSpeedUpTimes.RemoveAt(1)
+            
+            gSpeedUpTimes.Push(now)
+            
+            ; Only speed up when threshold is met
+            if (gSpeedUpTimes.Length >= SpeedUpThreshold) {
+                IncreaseSpeed()
+                gSpeedUpTimes := []          ; Reset counter after speed increase
+                gLastSpeedUpTime := now      ; Record time of speed increase
+            }
         }
         return
     }
@@ -79,7 +105,9 @@ HandleWheel(dir) {
 }
 
 StartAutoScroll(dir) {
-    global gIsAuto, gAutoDir, gStepIndex, StepIntervals, StartDirection, gTimesUp, gTimesDown, gMouseLastX, gMouseLastY, MouseMovePoll
+    global gIsAuto, gAutoDir, gStepIndex, StepIntervals, StartDirection
+    global gTimesUp, gTimesDown, gMouseLastX, gMouseLastY, MouseMovePoll
+    global gSpeedUpTimes, gLastSpeedUpTime
 
     gIsAuto := true
     gStepIndex := 1
@@ -94,6 +122,10 @@ StartAutoScroll(dir) {
     ; Reset counters so they don't immediately retrigger
     gTimesUp := []
     gTimesDown := []
+    gSpeedUpTimes := []
+    gLastSpeedUpTime := 0
+    
+    ShowSpeedIndicator()  ; Optional visual feedback
 }
 
 IncreaseSpeed() {
@@ -101,11 +133,14 @@ IncreaseSpeed() {
     if (gStepIndex < StepIntervals.Length) {
         gStepIndex += 1
         SetTimer(AutoScrollTick, StepIntervals[gStepIndex])
+        ShowSpeedIndicator()  ; Optional visual feedback
     }
 }
 
 StopAutoScroll(reason := "") {
     global gIsAuto, gAutoDir, gStepIndex, gTimesUp, gTimesDown
+    global gSpeedUpTimes, gLastSpeedUpTime
+    
     gIsAuto := false
     gAutoDir := ""
     gStepIndex := 1
@@ -113,6 +148,10 @@ StopAutoScroll(reason := "") {
     SetTimer(MonitorMouseMove, 0)
     gTimesUp := []
     gTimesDown := []
+    gSpeedUpTimes := []
+    gLastSpeedUpTime := 0
+    
+    ToolTip()  ; Hide any tooltip
     ; ToolTip(reason)  ; uncomment for debugging
 }
 
@@ -137,11 +176,31 @@ MonitorMouseMove() {
         StopAutoScroll("MouseMove")
         return
     }
+}
 
-    ; If you prefer to allow unlimited micro-drift (never stop unless a single jump exceeds tolerance),
-    ; uncomment the next two lines to continually “follow” the cursor within the tolerance:
-    ; gMouseLastX := x
-    ; gMouseLastY := y
+; NEW: Visual speed indicator (optional - comment out if not wanted)
+ShowSpeedIndicator() {
+    global gStepIndex, StepIntervals, gAutoDir
+    
+    speedLabels := ["Slow", "Medium", "Fast", "Max"]
+    arrows := (gAutoDir = "up") ? "▲" : "▼"
+    
+    ; Build progress bar
+    bars := ""
+    Loop StepIntervals.Length {
+        bars .= (A_Index <= gStepIndex) ? "●" : "○"
+    }
+    
+    label := (gStepIndex <= speedLabels.Length) ? speedLabels[gStepIndex] : "Level " gStepIndex
+    
+    ToolTip(arrows " Auto-Scroll: " label "`n   [" bars "]")
+    SetTimer(HideSpeedIndicator, -1500)  ; Hide after 1.5s
+}
+
+HideSpeedIndicator() {
+    global gIsAuto
+    if (!gIsAuto)
+        ToolTip()
 }
 
 OnUserActivity(reason := "") {
