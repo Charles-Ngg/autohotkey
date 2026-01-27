@@ -2,43 +2,43 @@
 #SingleInstance Force
 
 ; ================== Settings ==================
-StartDirection := "follow"           ; "follow" = use last flick direction, or "down"/"up" to force one direction
-StepIntervals := [200, 50, 15, 5]    ; ms between auto wheel ticks (slower -> faster)
-ScrollMultiplier := [1, 1, 2, 5]     ; scroll events sent per tick at each speed level
-TripleWindow  := 100                 ; ms window to detect 3 fast wheel notches to START
-MouseMovePoll := 25                  ; ms for mouse-move polling while auto-scroll is active
-MouseMoveTolerance := 50             ; pixels allowed before auto-scroll stops
+StartDirection := "follow"           ; "follow" = use last flick direction, or "down"/"up"
+StepIntervals := [250, 50, 15, 5]    ; ms between ticks (slower -> faster)
+ScrollMultiplier := [1, 1, 2, 5]     ; scroll events per tick
+TripleWindow  := 100                 ; ms to detect 3 fast flicks
+MouseMovePoll := 25                  ; ms for mouse polling
+MouseMoveTolerance := 50             ; pixels allowed before stop
 
 ; ===== Speed-Up Control Settings =====
-SpeedUpWindow := 400                 ; ms window to detect speed-up flicks
-SpeedUpThreshold := 3                ; number of same-direction flicks needed to speed up
-SpeedUpCooldown := 200               ; ms minimum wait after a speed increase before next upgrade allowed
+SpeedUpWindow := 300                 ; ms window to detect speed-up flicks
+SpeedUpThreshold := 3                ; flicks needed to speed up
+SpeedUpCooldown := 200               ; ms wait before next upgrade
 ; ==============================================
+
+; Initialize Hooks
+SetupKeyboardActivityHooks()
 
 ; State
 global gIsAuto := false
-global gAutoDir := ""           ; "up" / "down"
+global gAutoDir := ""
 global gStepIndex := 1
 global gTimesUp := []
 global gTimesDown := []
 global gMouseLastX := 0, gMouseLastY := 0
-
-; Speed-up state
 global gSpeedUpTimes := []
 global gLastSpeedUpTime := 0
 
-; Hotkeys: "~" lets your normal scroll go through; "$" prevents our own Send() from retriggering the hotkey
+; ================== Hotkeys ==================
 ~$WheelUp::HandleWheel("up")
 ~$WheelDown::HandleWheel("down")
 
-; Stop on any mouse click (down event is enough)
+; Stop triggers
 ~LButton::OnUserActivity("LButton")
 ~RButton::OnUserActivity("RButton")
 ~MButton::OnUserActivity("MButton")
 ~XButton1::OnUserActivity("XButton1")
 ~XButton2::OnUserActivity("XButton2")
 
-; Catch-all keyboard hooks (vk08..vkFE)
 SetupKeyboardActivityHooks() {
     start := 0x08, finish := 0xFE
     Loop finish - start + 1 {
@@ -52,44 +52,40 @@ OnKeyboardAny(*) {
     OnUserActivity("Keyboard")
 }
 
+; ================== Logic ==================
+
 HandleWheel(dir) {
-    global gIsAuto, gAutoDir, gStepIndex, gTimesUp, gTimesDown, StepIntervals, TripleWindow, StartDirection
-    global gSpeedUpTimes, SpeedUpWindow, SpeedUpThreshold, SpeedUpCooldown, gLastSpeedUpTime
+    global gIsAuto, gAutoDir, gTimesUp, gTimesDown, TripleWindow, SpeedUpCooldown, gLastSpeedUpTime
+    global gSpeedUpTimes, SpeedUpWindow, SpeedUpThreshold
 
     now := A_TickCount
 
-    ; While auto-scroll is running:
+    ; 1. If Auto-Scroll is ACTIVE
     if (gIsAuto) {
         if (dir != gAutoDir) {
-            ; Opposite flick stops auto-scroll immediately
             StopAutoScroll("OppositeScroll")
         } else {
-            ; Same-direction flick: check if we can speed up
-            
-            ; Check cooldown first
+            ; Speed up logic
             if (now - gLastSpeedUpTime < SpeedUpCooldown)
                 return
             
-            ; Drop entries older than the SpeedUpWindow
             while (gSpeedUpTimes.Length && now - gSpeedUpTimes[1] > SpeedUpWindow)
                 gSpeedUpTimes.RemoveAt(1)
             
             gSpeedUpTimes.Push(now)
             
-            ; Only speed up when threshold is met
             if (gSpeedUpTimes.Length >= SpeedUpThreshold) {
                 IncreaseSpeed()
-                gSpeedUpTimes := []          ; Reset counter after speed increase
-                gLastSpeedUpTime := now      ; Record time of speed increase
+                gSpeedUpTimes := []
+                gLastSpeedUpTime := now
             }
         }
         return
     }
 
-    ; Not auto-scrolling: track fast triples per direction
+    ; 2. If Auto-Scroll is INACTIVE (Detection)
     times := (dir = "up") ? gTimesUp : gTimesDown
 
-    ; Drop entries older than the TripleWindow
     while (times.Length && now - times[1] > TripleWindow)
         times.RemoveAt(1)
 
@@ -100,7 +96,6 @@ HandleWheel(dir) {
     else
         gTimesDown := times
 
-    ; 3 flicks within window => start auto-scroll
     if (times.Length >= 3)
         StartAutoScroll(dir)
 }
@@ -115,18 +110,17 @@ StartAutoScroll(dir) {
     gAutoDir := (StartDirection = "follow") ? dir : StartDirection
     SetTimer(AutoScrollTick, StepIntervals[gStepIndex])
 
-    ; Start mouse-move monitoring
     MouseGetPos &mx, &my
     gMouseLastX := mx, gMouseLastY := my
     SetTimer(MonitorMouseMove, MouseMovePoll)
 
-    ; Reset counters so they don't immediately retrigger
+    ; Reset counters
     gTimesUp := []
     gTimesDown := []
     gSpeedUpTimes := []
     gLastSpeedUpTime := 0
     
-    ShowSpeedIndicator()  ; Optional visual feedback
+    ShowSpeedIndicator()
 }
 
 IncreaseSpeed() {
@@ -134,13 +128,12 @@ IncreaseSpeed() {
     if (gStepIndex < StepIntervals.Length) {
         gStepIndex += 1
         SetTimer(AutoScrollTick, StepIntervals[gStepIndex])
-        ShowSpeedIndicator()  ; Optional visual feedback
+        ShowSpeedIndicator()
     }
 }
 
 StopAutoScroll(reason := "") {
-    global gIsAuto, gAutoDir, gStepIndex, gTimesUp, gTimesDown
-    global gSpeedUpTimes, gLastSpeedUpTime
+    global gIsAuto, gAutoDir, gStepIndex, gTimesUp, gTimesDown, gSpeedUpTimes, gLastSpeedUpTime
     
     gIsAuto := false
     gAutoDir := ""
@@ -152,8 +145,7 @@ StopAutoScroll(reason := "") {
     gSpeedUpTimes := []
     gLastSpeedUpTime := 0
     
-    ToolTip()  ; Hide any tooltip
-    ; ToolTip(reason)  ; uncomment for debugging
+    ScrollOSD.Hide() ; Turn off the fancy UI
 }
 
 AutoScrollTick() {
@@ -161,11 +153,9 @@ AutoScrollTick() {
     if (!gIsAuto)
         return
     
-    ; Get how many scroll events to send at current speed level
     mult := (gStepIndex <= ScrollMultiplier.Length) ? ScrollMultiplier[gStepIndex] : 1
     scrollKey := (gAutoDir = "up") ? "{WheelUp}" : "{WheelDown}"
     
-    ; Send multiple scroll events for faster scrolling
     Loop mult {
         Send(scrollKey)
     }
@@ -180,37 +170,10 @@ MonitorMouseMove() {
     MouseGetPos &x, &y
     dx := x - gMouseLastX
     dy := y - gMouseLastY
-    ; Use squared distance to avoid sqrt
     if ((dx*dx + dy*dy) > MouseMoveTolerance * MouseMoveTolerance) {
         StopAutoScroll("MouseMove")
         return
     }
-}
-
-; Visual speed indicator
-ShowSpeedIndicator() {
-    global gStepIndex, StepIntervals, ScrollMultiplier, gAutoDir
-    
-    speedLabels := ["Slow", "Medium", "Fast", "TURBO"]
-    arrows := (gAutoDir = "up") ? "▲" : "▼"
-    
-    ; Build progress bar
-    bars := ""
-    Loop StepIntervals.Length {
-        bars .= (A_Index <= gStepIndex) ? "●" : "○"
-    }
-    
-    label := (gStepIndex <= speedLabels.Length) ? speedLabels[gStepIndex] : "Level " gStepIndex
-    mult := (gStepIndex <= ScrollMultiplier.Length) ? ScrollMultiplier[gStepIndex] : 1
-    
-    ToolTip(arrows " Auto-Scroll: " label " (x" mult ")`n   [" bars "]")
-    SetTimer(HideSpeedIndicator, -1500)  ; Hide after 1.5s
-}
-
-HideSpeedIndicator() {
-    global gIsAuto
-    if (!gIsAuto)
-        ToolTip()
 }
 
 OnUserActivity(reason := "") {
@@ -219,5 +182,67 @@ OnUserActivity(reason := "") {
         StopAutoScroll(reason)
 }
 
-; Initialize catch-all keyboard hooks at startup
-SetupKeyboardActivityHooks()
+; ================== Fancy UI ==================
+
+ShowSpeedIndicator() {
+    global gStepIndex, gAutoDir, StepIntervals
+    ScrollOSD.Show(gStepIndex, StepIntervals.Length, gAutoDir)
+    SetTimer(() => ScrollOSD.Hide(), -2000) ; Fade out after 2 seconds
+}
+
+class ScrollOSD {
+    static GuiObj := ""
+    static TxtArrow := "", TxtLabel := "", Progress := ""
+    
+    static Show(level, maxLevels, dir) {
+        if !this.GuiObj {
+            this.Create()
+        }
+        
+        ; Calculate Percentage
+        pct := (level / maxLevels) * 100
+        
+        ; Dynamic Colors based on speed
+        ; Level 1: Green, 2: Cyan, 3: Orange, 4: Red
+        barColor := (level = 1) ? "00FF00" : (level = 2) ? "00FFFF" : (level = 3) ? "FFAA00" : "FF3333"
+        arrowSymbol := (dir = "up") ? "▲" : "▼"
+        labels := ["Slow", "Medium", "Fast", "TURBO"]
+        txt := (level <= labels.Length) ? labels[level] : "Lvl " level
+
+        ; Update Controls
+        this.TxtArrow.Text := arrowSymbol
+        this.TxtLabel.Text := txt
+        this.Progress.Opt("c" barColor)
+        this.Progress.Value := pct
+        
+        ; Show without activating (NoActivate) to keep focus on browser/doc
+        ; Position: Top Center (y100)
+        this.GuiObj.Show("NoActivate AutoSize xCenter y100")
+        
+        ; Optional: Ensure transparency in case it got reset
+        WinSetTransparent(210, this.GuiObj.Hwnd)
+    }
+    
+    static Hide() {
+        if this.GuiObj
+            this.GuiObj.Hide()
+    }
+    
+    static Create() {
+        ; Create a borderless, always-on-top tool window
+        this.GuiObj := Gui("+AlwaysOnTop -Caption +ToolWindow +E0x20") ; E0x20 = Clickthrough
+        this.GuiObj.BackColor := "1A1A1A" ; Dark Grey background
+        
+        ; Big Arrow
+        this.TxtArrow := this.GuiObj.Add("Text", "w250 Center cWhite", "▲")
+        
+        ; Speed Label
+        this.TxtLabel := this.GuiObj.Add("Text", "wp Center cWhite y+0", "Speed")
+        
+        ; Progress Bar (Slim)
+        this.Progress := this.GuiObj.Add("Progress", "wp h6 c00FF00 Background333333 y+10", 0)
+        
+        ; Final Margin
+        this.GuiObj.Add("Text", "h5", "") 
+    }
+}
