@@ -3,12 +3,13 @@
 
 ; ================== Settings ==================
 StartDirection := "follow"           ; "follow" = use last flick direction, or "down"/"up" to force one direction
-StepIntervals := [200, 20, 5, 1]     ; ms between auto wheel ticks (slower -> faster)
+StepIntervals := [200, 50, 15, 5]    ; ms between auto wheel ticks (slower -> faster)
+ScrollMultiplier := [1, 1, 2, 5]     ; scroll events sent per tick at each speed level
 TripleWindow  := 100                 ; ms window to detect 3 fast wheel notches to START
 MouseMovePoll := 25                  ; ms for mouse-move polling while auto-scroll is active
 MouseMoveTolerance := 50             ; pixels allowed before auto-scroll stops
 
-; ===== NEW: Speed-Up Control Settings =====
+; ===== Speed-Up Control Settings =====
 SpeedUpWindow := 400                 ; ms window to detect speed-up flicks
 SpeedUpThreshold := 3                ; number of same-direction flicks needed to speed up
 SpeedUpCooldown := 200               ; ms minimum wait after a speed increase before next upgrade allowed
@@ -22,7 +23,7 @@ global gTimesUp := []
 global gTimesDown := []
 global gMouseLastX := 0, gMouseLastY := 0
 
-; NEW: Speed-up state
+; Speed-up state
 global gSpeedUpTimes := []
 global gLastSpeedUpTime := 0
 
@@ -156,10 +157,18 @@ StopAutoScroll(reason := "") {
 }
 
 AutoScrollTick() {
-    global gIsAuto, gAutoDir
+    global gIsAuto, gAutoDir, gStepIndex, ScrollMultiplier
     if (!gIsAuto)
         return
-    Send(gAutoDir = "up" ? "{WheelUp}" : "{WheelDown}")
+    
+    ; Get how many scroll events to send at current speed level
+    mult := (gStepIndex <= ScrollMultiplier.Length) ? ScrollMultiplier[gStepIndex] : 1
+    scrollKey := (gAutoDir = "up") ? "{WheelUp}" : "{WheelDown}"
+    
+    ; Send multiple scroll events for faster scrolling
+    Loop mult {
+        Send(scrollKey)
+    }
 }
 
 MonitorMouseMove() {
@@ -178,11 +187,11 @@ MonitorMouseMove() {
     }
 }
 
-; NEW: Visual speed indicator (optional - comment out if not wanted)
+; Visual speed indicator
 ShowSpeedIndicator() {
-    global gStepIndex, StepIntervals, gAutoDir
+    global gStepIndex, StepIntervals, ScrollMultiplier, gAutoDir
     
-    speedLabels := ["Slow", "Medium", "Fast", "Max"]
+    speedLabels := ["Slow", "Medium", "Fast", "TURBO"]
     arrows := (gAutoDir = "up") ? "▲" : "▼"
     
     ; Build progress bar
@@ -192,8 +201,9 @@ ShowSpeedIndicator() {
     }
     
     label := (gStepIndex <= speedLabels.Length) ? speedLabels[gStepIndex] : "Level " gStepIndex
+    mult := (gStepIndex <= ScrollMultiplier.Length) ? ScrollMultiplier[gStepIndex] : 1
     
-    ToolTip(arrows " Auto-Scroll: " label "`n   [" bars "]")
+    ToolTip(arrows " Auto-Scroll: " label " (x" mult ")`n   [" bars "]")
     SetTimer(HideSpeedIndicator, -1500)  ; Hide after 1.5s
 }
 
